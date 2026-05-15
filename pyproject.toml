@@ -1,0 +1,40 @@
+[build-system]
+requires = ["setuptools>=70"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "altamira-cli"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = [
+    "typer",
+    "rich",
+    "pyyaml",
+    "pydantic",
+    "anthropic",
+    "openai",
+    "markdown",
+    "jinja2",
+    "prompt_toolkit",
+]
+
+[project.scripts]
+altamira = "altamira.cli.app:app"
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+    "smoke: end-to-end happy-path tests (run with -m smoke)",
+    "regression: regression guard tests for previously fixed bugs",
+]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+"altamira.skills" = ["prompts/*.md"]
+"altamira.publish" = ["templates/*.j2"]

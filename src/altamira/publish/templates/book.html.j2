@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="{{ lang }}">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>{{ title }}</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --nav-width: 220px;
+      --text: #1a1a1a;
+      --muted: #555;
+      --rule: #ddd;
+      --nav-bg: #f7f5f2;
+      --accent: #8b4513;
+      --body-font: Georgia, "Times New Roman", serif;
+      --ui-font: system-ui, -apple-system, sans-serif;
+    }
+
+    html { font-size: 18px; }
+
+    body {
+      display: flex;
+      min-height: 100vh;
+      color: var(--text);
+      background: #fff;
+      font-family: var(--body-font);
+    }
+
+    /* ── Navigation ───────────────────────────────────────── */
+    nav {
+      position: fixed;
+      top: 0; left: 0;
+      width: var(--nav-width);
+      height: 100vh;
+      overflow-y: auto;
+      background: var(--nav-bg);
+      border-right: 1px solid var(--rule);
+      padding: 2rem 1.25rem;
+      font-family: var(--ui-font);
+    }
+
+    nav .book-title {
+      font-size: 0.85rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: var(--accent);
+      margin-bottom: 1.5rem;
+      line-height: 1.3;
+    }
+
+    nav .book-subtitle {
+      font-size: 0.75rem;
+      color: var(--muted);
+      margin-top: -1rem;
+      margin-bottom: 1.5rem;
+      line-height: 1.4;
+    }
+
+    nav ul { list-style: none; }
+
+    nav ul li { margin-bottom: 0.5rem; }
+
+    nav ul li a {
+      display: block;
+      font-size: 0.82rem;
+      color: var(--muted);
+      text-decoration: none;
+      padding: 0.2rem 0;
+      border-left: 2px solid transparent;
+      padding-left: 0.6rem;
+      transition: color 0.15s, border-color 0.15s;
+      line-height: 1.4;
+    }
+
+    nav ul li a:hover {
+      color: var(--text);
+      border-left-color: var(--accent);
+    }
+
+    /* ── Main content ─────────────────────────────────────── */
+    main {
+      margin-left: var(--nav-width);
+      flex: 1;
+      padding: 4rem 3rem 6rem;
+      max-width: calc(var(--nav-width) + 740px);
+    }
+
+    /* ── Cover ────────────────────────────────────────────── */
+    .cover-wrap {
+      text-align: center;
+      margin-bottom: 4rem;
+    }
+
+    .cover-wrap img.cover {
+      max-width: 360px;
+      width: 100%;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.18);
+    }
+
+    /* ── Chapter articles ─────────────────────────────────── */
+    article {
+      margin-bottom: 5rem;
+      padding-bottom: 3rem;
+      border-bottom: 1px solid var(--rule);
+    }
+
+    article:last-child {
+      border-bottom: none;
+    }
+
+    article h1 {
+      font-size: 2rem;
+      font-weight: 700;
+      line-height: 1.2;
+      margin-bottom: 2rem;
+      color: var(--text);
+    }
+
+    article h2 { font-size: 1.4rem; margin: 2rem 0 0.75rem; }
+    article h3 { font-size: 1.15rem; margin: 1.5rem 0 0.5rem; }
+
+    article p {
+      line-height: 1.8;
+      margin-bottom: 1.25rem;
+      text-align: justify;
+      hyphens: auto;
+    }
+
+    article p:first-of-type::first-line {
+      font-variant: small-caps;
+      letter-spacing: 0.03em;
+    }
+
+    article blockquote {
+      border-left: 3px solid var(--accent);
+      padding: 0.5rem 0 0.5rem 1.25rem;
+      margin: 1.5rem 0;
+      color: var(--muted);
+      font-style: italic;
+    }
+
+    article ul, article ol {
+      padding-left: 1.5rem;
+      margin-bottom: 1.25rem;
+      line-height: 1.8;
+    }
+
+    article img {
+      max-width: 100%;
+      height: auto;
+      display: block;
+      margin: 2rem auto;
+    }
+
+    article table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 1.5rem 0;
+      font-size: 0.9rem;
+      font-family: var(--ui-font);
+    }
+
+    article th, article td {
+      border: 1px solid var(--rule);
+      padding: 0.5rem 0.75rem;
+      text-align: left;
+    }
+
+    article th { background: var(--nav-bg); font-weight: 600; }
+
+    article code {
+      font-family: "Courier New", monospace;
+      font-size: 0.85em;
+      background: var(--nav-bg);
+      padding: 0.1em 0.35em;
+      border-radius: 3px;
+    }
+
+    article pre {
+      background: var(--nav-bg);
+      padding: 1rem;
+      overflow-x: auto;
+      border-radius: 4px;
+      margin: 1.5rem 0;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    article pre code { background: none; padding: 0; }
+
+    /* ── Print ────────────────────────────────────────────── */
+    @media print {
+      nav { display: none; }
+      main { margin-left: 0; padding: 2rem; max-width: 100%; }
+      article { page-break-after: always; }
+    }
+  </style>
+</head>
+<body>
+  <nav>
+    <div class="book-title">{{ title }}</div>
+    {% if subtitle %}<div class="book-subtitle">{{ subtitle }}</div>{% endif %}
+    <ul>
+      {% for ch in chapters %}
+      <li><a href="#{{ ch.id }}">{{ ch.order }}. {{ ch.title }}</a></li>
+      {% endfor %}
+    </ul>
+  </nav>
+
+  <main>
+    {% if cover_html %}
+    <div class="cover-wrap">{{ cover_html | safe }}</div>
+    {% endif %}
+
+    {% for ch in chapters %}
+    <article id="{{ ch.id }}">
+      {{ ch.html | safe }}
+    </article>
+    {% endfor %}
+  </main>
+</body>
+</html>
