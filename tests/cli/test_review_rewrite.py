@@ -36,7 +36,7 @@ def chapter_with_content(initialized_project):
     return initialized_project, chapter_dir, md_path, history_path
 
 
-@pytest.fixture(autouse=False)
+@pytest.fixture
 def patch_reviewer(monkeypatch):
     """Patch _reviewer on the module so review tests use the deterministic mock."""
     monkeypatch.setattr(review_cmd, "_reviewer", mock_review)
