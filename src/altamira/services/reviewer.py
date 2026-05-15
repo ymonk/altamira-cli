@@ -31,12 +31,13 @@ def llm_review(text: str) -> list[ParagraphComment]:
         if p.strip() and not p.lstrip().startswith("#")
     ]
 
-    skill_prompt = load_skill("chapter_reviewer") or ""
-    # Replace the placeholder with the actual chapter text
+    skill_prompt = load_skill("chapter_reviewer")
+    if not skill_prompt:
+        return []
     prompt = skill_prompt.replace("[PASTE CHAPTER HERE]", text)
 
+    provider = get_provider()  # let EnvironmentError / ImportError / ValueError propagate
     try:
-        provider = get_provider()
         raw = provider(prompt)
     except Exception:
         return []

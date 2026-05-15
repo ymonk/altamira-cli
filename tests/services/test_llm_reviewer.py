@@ -69,3 +69,19 @@ def test_llm_review_returns_empty_on_non_list_json():
         from altamira.services.reviewer import llm_review
         comments = llm_review(CHAPTER)
     assert comments == []
+
+
+def test_llm_review_propagates_provider_config_error():
+    with patch("altamira.services.reviewer.get_provider", side_effect=EnvironmentError("No API key")):
+        from altamira.services.reviewer import llm_review
+        import pytest
+        with pytest.raises(EnvironmentError):
+            llm_review(CHAPTER)
+
+
+def test_llm_review_returns_empty_when_skill_missing():
+    with patch("altamira.services.reviewer.load_skill", return_value=None):
+        with patch("altamira.services.reviewer.get_provider", return_value=_make_provider("[]")):
+            from altamira.services.reviewer import llm_review
+            comments = llm_review(CHAPTER)
+    assert comments == []

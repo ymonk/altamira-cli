@@ -43,3 +43,11 @@ def test_llm_rewrite_falls_back_to_original_on_error():
         from altamira.services.rewriter import llm_rewrite
         result = llm_rewrite(CHAPTER)
     assert result == CHAPTER
+
+
+def test_llm_rewrite_propagates_provider_config_error():
+    with patch("altamira.services.rewriter.get_provider", side_effect=EnvironmentError("No API key")):
+        from altamira.services.rewriter import llm_rewrite
+        import pytest
+        with pytest.raises(EnvironmentError):
+            llm_rewrite(CHAPTER)

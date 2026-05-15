@@ -71,7 +71,7 @@ def openai_provider() -> ProviderFn:
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
-        return response.choices[0].message.content
+        return response.choices[0].message.content or ""
 
     return call
 

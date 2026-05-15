@@ -38,8 +38,8 @@ Chapter:
 
 def llm_rewrite(text: str) -> str:
     """Call the active LLM provider and return the rewritten chapter text."""
+    provider = get_provider()  # let EnvironmentError / ImportError / ValueError propagate
     try:
-        provider = get_provider()
         return provider(_REWRITE_PROMPT + text)
     except Exception:
         return text
