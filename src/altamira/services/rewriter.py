@@ -1,5 +1,7 @@
 from typing import Callable
 
+from altamira.services.provider import get_provider
+
 # Swap this type for a real LLM-backed implementation without touching the command.
 RewriteFn = Callable[[str], str]
 
@@ -17,6 +19,30 @@ _SUBSTITUTIONS = [
     ("big ",          "considerable "),
     ("grew up",       "came of age"),
 ]
+
+
+_REWRITE_PROMPT = """\
+You are a memoir editor. Rewrite the chapter below to improve clarity, pacing, \
+and voice consistency.
+
+Rules:
+- Preserve all factual details and the author's voice exactly
+- Tighten sentences that are overlong or passive
+- Improve paragraph transitions so the narrative flows naturally
+- Do NOT add invented details, dialogue, or scenes
+- Return ONLY the rewritten chapter text — no commentary, no revision notes
+
+Chapter:
+"""
+
+
+def llm_rewrite(text: str) -> str:
+    """Call the active LLM provider and return the rewritten chapter text."""
+    try:
+        provider = get_provider()
+        return provider(_REWRITE_PROMPT + text)
+    except Exception:
+        return text
 
 
 def mock_rewrite(text: str) -> str:
