@@ -5,10 +5,9 @@ import typer
 
 from altamira.cli.console import console
 from altamira.domain.chapter import find_chapter
-from altamira.services.reviewer import ParagraphComment, ReviewFn, mock_review
+from altamira.services.reviewer import ParagraphComment, ReviewFn, llm_review
 
-# Swap this to point at a real LLM reviewer without changing the command.
-_reviewer: ReviewFn = mock_review
+_reviewer: ReviewFn = llm_review
 
 
 def _resolve_chapter(cwd: Path, identifier: str) -> tuple[Path, Path, Path]:

@@ -1,7 +1,9 @@
 import pytest
 
+import altamira.cli.review_cmd as review_cmd
 from altamira.cli.app import app
 from altamira.domain.chapter import create_chapter
+from altamira.services.reviewer import mock_review
 
 # Four body paragraphs — each contains a word from _SUBSTITUTIONS so mock_rewrite
 # produces exactly one change per paragraph.
@@ -34,9 +36,15 @@ def chapter_with_content(initialized_project):
     return initialized_project, chapter_dir, md_path, history_path
 
 
+@pytest.fixture(autouse=False)
+def patch_reviewer(monkeypatch):
+    """Patch _reviewer on the module so review tests use the deterministic mock."""
+    monkeypatch.setattr(review_cmd, "_reviewer", mock_review)
+
+
 # ── review ────────────────────────────────────────────────────────────────────
 
-def test_review_accept_one_creates_artifact(cli_runner, chapter_with_content):
+def test_review_accept_one_creates_artifact(cli_runner, chapter_with_content, patch_reviewer):
     _, chapter_dir, _, history_path = chapter_with_content
 
     result = cli_runner.invoke(app, ["review", "1"], input="a\nr\nr\nr\n")
@@ -53,7 +61,7 @@ def test_review_accept_one_creates_artifact(cli_runner, chapter_with_content):
     assert "- artifact:" in history
 
 
-def test_review_reject_all_writes_nothing(cli_runner, chapter_with_content):
+def test_review_reject_all_writes_nothing(cli_runner, chapter_with_content, patch_reviewer):
     _, chapter_dir, _, history_path = chapter_with_content
     original_history = history_path.read_text()
 
@@ -64,7 +72,7 @@ def test_review_reject_all_writes_nothing(cli_runner, chapter_with_content):
     assert history_path.read_text() == original_history
 
 
-def test_review_accept_all_records_all_comments(cli_runner, chapter_with_content):
+def test_review_accept_all_records_all_comments(cli_runner, chapter_with_content, patch_reviewer):
     _, chapter_dir, _, history_path = chapter_with_content
 
     result = cli_runner.invoke(app, ["review", "1"], input="A\n")
@@ -78,7 +86,7 @@ def test_review_accept_all_records_all_comments(cli_runner, chapter_with_content
     assert "- rejected: 0" in history
 
 
-def test_review_artifact_contains_accepted_comment(cli_runner, chapter_with_content):
+def test_review_artifact_contains_accepted_comment(cli_runner, chapter_with_content, patch_reviewer):
     _, chapter_dir, _, _ = chapter_with_content
 
     cli_runner.invoke(app, ["review", "1"], input="a\nr\nr\nr\n", catch_exceptions=False)
