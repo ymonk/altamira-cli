@@ -4,8 +4,10 @@ Run with: pytest -m smoke
 """
 import yaml
 import pytest
+from unittest.mock import patch
 
 from altamira.cli.app import app
+from altamira.services.reviewer import mock_review
 
 
 @pytest.mark.smoke
@@ -45,8 +47,9 @@ def test_full_project_lifecycle(cli_runner, initialized_project):
     result = cli_runner.invoke(app, ["scan"], catch_exceptions=False)
     assert result.exit_code == 0
 
-    # review: accept all suggestions
-    result = cli_runner.invoke(app, ["review", "1"], input="A\n")
+    # review: accept all suggestions (mock LLM — smoke test has no API key)
+    with patch("altamira.cli.review_cmd._reviewer", mock_review):
+        result = cli_runner.invoke(app, ["review", "1"], input="A\n")
     assert result.exit_code == 0
 
     # publish prepare — should pass cleanly
