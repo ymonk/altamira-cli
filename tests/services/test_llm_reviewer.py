@@ -41,6 +41,7 @@ def test_llm_review_includes_correct_paragraph_text():
     with patch("altamira.services.reviewer.get_provider", return_value=_make_provider(mock_json)):
         from altamira.services.reviewer import llm_review
         comments = llm_review(CHAPTER)
+    assert comments[0].paragraph_index == 1
     assert "war" in comments[0].paragraph_text
 
 
@@ -58,6 +59,13 @@ def test_llm_review_ignores_out_of_range_indices():
 
 def test_llm_review_returns_empty_on_bad_json():
     with patch("altamira.services.reviewer.get_provider", return_value=_make_provider("not json")):
+        from altamira.services.reviewer import llm_review
+        comments = llm_review(CHAPTER)
+    assert comments == []
+
+
+def test_llm_review_returns_empty_on_non_list_json():
+    with patch("altamira.services.reviewer.get_provider", return_value=_make_provider('{"key": "val"}')):
         from altamira.services.reviewer import llm_review
         comments = llm_review(CHAPTER)
     assert comments == []

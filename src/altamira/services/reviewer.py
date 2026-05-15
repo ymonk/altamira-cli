@@ -46,10 +46,13 @@ def llm_review(text: str) -> list[ParagraphComment]:
     except (json.JSONDecodeError, ValueError):
         return []
 
+    if not isinstance(data, list):
+        return []
+
     comments = []
     for item in data:
         idx = item.get("paragraph_index")
-        comment = item.get("comment", "")
+        comment = str(item.get("comment") or "")
         if not isinstance(idx, int) or idx < 0 or idx >= len(body_paras):
             continue
         comments.append(ParagraphComment(
