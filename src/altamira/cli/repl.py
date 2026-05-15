@@ -20,6 +20,7 @@ from altamira.domain.chapter import create_chapter, find_chapter, list_chapters,
 from altamira.domain.note import create_note, list_notes
 from altamira.infra.db import ensure_tables
 from altamira.infra.scanner import scan_project
+from altamira.services.provider import get_provider
 from altamira.skills.loader import list_skills
 
 _CMD_COLOR = "#7C9FCE"
@@ -522,6 +523,29 @@ _DISPATCH = {
 }
 
 
+# ── Agent context builder ─────────────────────────────────────────────────────
+
+def _build_agent_context(cwd: Path) -> str:
+    parts: list[str] = []
+    try:
+        config = load_config(cwd)
+        parts.append(f"Project: {config.name}")
+        if config.subject_name:
+            parts.append(f"Subject: {config.subject_name}")
+        parts.append("")
+    except Exception:
+        pass
+
+    chapters = list_chapters(cwd / "chapters")
+    for ch in chapters:
+        chapter_dir = cwd / "chapters" / f"chapter-{ch.order:02d}"
+        md_path = chapter_dir / f"chapter-{ch.order:02d}.md"
+        parts.append(f"--- Chapter {ch.order}: {ch.title} ---")
+        parts.append(md_path.read_text(encoding="utf-8").strip() if md_path.exists() else f"[status: {ch.status}]")
+        parts.append("")
+    return "\n".join(parts)
+
+
 # ── Non-interactive execution ─────────────────────────────────────────────────
 
 def run_single_instruction(instruction: str, cwd: Path) -> int:
@@ -553,9 +577,27 @@ def run_single_instruction(instruction: str, cwd: Path) -> int:
             return 1
         return 0
 
-    # Plain-English prompt — AI not yet configured.
-    console.print("[yellow]AI model hasn't been configured yet.[/yellow]  Use a /command instead, or configure a provider via ALTAMIRA_PROVIDER.")
-    return 1
+    # Plain-English prompt — dispatch to LLM provider with project context.
+    if not _is_project(cwd):
+        console.print("[yellow]Warning:[/yellow] Not in an Altamira project. Running without project context.")
+
+    try:
+        provider = get_provider()
+    except (EnvironmentError, ImportError, ValueError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        return 1
+
+    context = _build_agent_context(cwd) if _is_project(cwd) else ""
+    prompt = f"{context}\n{instruction}" if context.strip() else instruction
+
+    try:
+        result = provider(prompt)
+    except Exception as e:
+        console.print(f"[red]Provider error:[/red] {e}")
+        return 1
+
+    console.print(result)
+    return 0
 
 
 # ── REPL entry point ──────────────────────────────────────────────────────────
@@ -591,7 +633,17 @@ def run_repl(cwd: Path) -> None:
             break
 
         if not raw.startswith("/"):
-            console.print("[yellow]AI model hasn't been configured yet.[/yellow]  Commands start with [bold]/[/bold]  — try /commands")
+            try:
+                provider = get_provider()
+            except (EnvironmentError, ImportError, ValueError) as e:
+                console.print(f"[red]Error:[/red] {e}")
+                continue
+            context = _build_agent_context(cwd) if _is_project(cwd) else ""
+            prompt = f"{context}\n{raw}" if context.strip() else raw
+            try:
+                console.print(provider(prompt))
+            except Exception as e:
+                console.print(f"[red]Provider error:[/red] {e}")
             continue
 
         parts = raw[1:].split()

@@ -120,12 +120,13 @@ def test_repl_unknown_command_no_error(initialized_project):
         run_repl(initialized_project)
 
 
-def test_repl_non_slash_input_shows_not_configured(initialized_project, capsys):
+def test_repl_non_slash_input_calls_provider(initialized_project, capsys):
     from altamira.cli.repl import run_repl
     with patch("altamira.cli.repl.pt_prompt", side_effect=["hello world", "/exit"]):
-        run_repl(initialized_project)
+        with patch("altamira.cli.repl.get_provider", return_value=lambda p: "Mocked response"):
+            run_repl(initialized_project)
     captured = capsys.readouterr()
-    assert "AI model hasn't been configured" in captured.out
+    assert "Mocked response" in captured.out
 
 
 def test_repl_empty_input_ignored(initialized_project):
@@ -164,15 +165,17 @@ def test_exec_unknown_command_returns_error(initialized_project):
     assert code == 1
 
 
-def test_exec_plain_prompt_shows_not_configured(initialized_project, capsys):
+def test_exec_plain_prompt_calls_provider(initialized_project, capsys):
     from altamira.cli.repl import run_single_instruction
-    code = run_single_instruction("summarize the book", initialized_project)
-    assert code == 1
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: "Mocked LLM reply"):
+        code = run_single_instruction("summarize the book", initialized_project)
+    assert code == 0
     captured = capsys.readouterr()
-    assert "AI model hasn't been configured" in captured.out
+    assert "Mocked LLM reply" in captured.out
 
 
 def test_exec_via_cli_plain_prompt(cli_runner, initialized_project):
-    result = cli_runner.invoke(app, ["-e", "tell me about this project"])
-    assert result.exit_code == 1
-    assert "AI model hasn't been configured" in result.output
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: "CLI LLM reply"):
+        result = cli_runner.invoke(app, ["-e", "tell me about this project"])
+    assert result.exit_code == 0
+    assert "CLI LLM reply" in result.output
