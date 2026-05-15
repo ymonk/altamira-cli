@@ -120,13 +120,59 @@ def test_repl_unknown_command_no_error(initialized_project):
         run_repl(initialized_project)
 
 
-def test_repl_non_slash_input_no_error(initialized_project):
+def test_repl_non_slash_input_shows_not_configured(initialized_project, capsys):
     from altamira.cli.repl import run_repl
     with patch("altamira.cli.repl.pt_prompt", side_effect=["hello world", "/exit"]):
         run_repl(initialized_project)
+    captured = capsys.readouterr()
+    assert "AI model hasn't been configured" in captured.out
 
 
 def test_repl_empty_input_ignored(initialized_project):
     from altamira.cli.repl import run_repl
     with patch("altamira.cli.repl.pt_prompt", side_effect=["", "   ", "/exit"]):
         run_repl(initialized_project)
+
+
+# ── -e / run_single_instruction ───────────────────────────────────────────────
+
+def test_exec_empty_instruction_returns_error(initialized_project):
+    from altamira.cli.repl import run_single_instruction
+    code = run_single_instruction("", initialized_project)
+    assert code == 1
+
+
+def test_exec_quit_returns_zero(initialized_project):
+    from altamira.cli.repl import run_single_instruction
+    assert run_single_instruction("/quit", initialized_project) == 0
+
+
+def test_exec_exit_returns_zero(initialized_project):
+    from altamira.cli.repl import run_single_instruction
+    assert run_single_instruction("/exit", initialized_project) == 0
+
+
+def test_exec_known_command_returns_zero(initialized_project):
+    from altamira.cli.repl import run_single_instruction
+    code = run_single_instruction("/chapter list", initialized_project)
+    assert code == 0
+
+
+def test_exec_unknown_command_returns_error(initialized_project):
+    from altamira.cli.repl import run_single_instruction
+    code = run_single_instruction("/notacommand", initialized_project)
+    assert code == 1
+
+
+def test_exec_plain_prompt_shows_not_configured(initialized_project, capsys):
+    from altamira.cli.repl import run_single_instruction
+    code = run_single_instruction("summarize the book", initialized_project)
+    assert code == 1
+    captured = capsys.readouterr()
+    assert "AI model hasn't been configured" in captured.out
+
+
+def test_exec_via_cli_plain_prompt(cli_runner, initialized_project):
+    result = cli_runner.invoke(app, ["-e", "tell me about this project"])
+    assert result.exit_code == 1
+    assert "AI model hasn't been configured" in result.output
