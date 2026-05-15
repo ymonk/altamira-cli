@@ -1,9 +1,11 @@
 import pytest
 
 import altamira.cli.review_cmd as review_cmd
+import altamira.cli.rewrite_cmd as rewrite_cmd
 from altamira.cli.app import app
 from altamira.domain.chapter import create_chapter
 from altamira.services.reviewer import mock_review
+from altamira.services.rewriter import mock_rewrite
 
 # Four body paragraphs — each contains a word from _SUBSTITUTIONS so mock_rewrite
 # produces exactly one change per paragraph.
@@ -40,6 +42,12 @@ def chapter_with_content(initialized_project):
 def patch_reviewer(monkeypatch):
     """Patch _reviewer on the module so review tests use the deterministic mock."""
     monkeypatch.setattr(review_cmd, "_reviewer", mock_review)
+
+
+@pytest.fixture
+def patch_rewriter(monkeypatch):
+    """Patch _rewriter on the module so rewrite tests use the deterministic mock."""
+    monkeypatch.setattr(rewrite_cmd, "_rewriter", mock_rewrite)
 
 
 # ── review ────────────────────────────────────────────────────────────────────
@@ -100,7 +108,7 @@ def test_review_artifact_contains_accepted_comment(cli_runner, chapter_with_cont
 
 # ── rewrite ───────────────────────────────────────────────────────────────────
 
-def test_rewrite_accept_one_modifies_md(cli_runner, chapter_with_content):
+def test_rewrite_accept_one_modifies_md(cli_runner, chapter_with_content, patch_rewriter):
     _, chapter_dir, md_path, history_path = chapter_with_content
 
     result = cli_runner.invoke(app, ["rewrite", "1"], input="a\nr\nr\nr\n")
@@ -125,7 +133,7 @@ def test_rewrite_accept_one_modifies_md(cli_runner, chapter_with_content):
     assert "- checkpoint:" in history
 
 
-def test_rewrite_reject_all_keeps_md(cli_runner, chapter_with_content):
+def test_rewrite_reject_all_keeps_md(cli_runner, chapter_with_content, patch_rewriter):
     _, chapter_dir, md_path, history_path = chapter_with_content
     original_history = history_path.read_text()
 
@@ -137,7 +145,7 @@ def test_rewrite_reject_all_keeps_md(cli_runner, chapter_with_content):
     assert history_path.read_text() == original_history
 
 
-def test_rewrite_accept_all_applies_all_changes(cli_runner, chapter_with_content):
+def test_rewrite_accept_all_applies_all_changes(cli_runner, chapter_with_content, patch_rewriter):
     _, chapter_dir, md_path, history_path = chapter_with_content
 
     result = cli_runner.invoke(app, ["rewrite", "1"], input="A\n")
@@ -154,7 +162,7 @@ def test_rewrite_accept_all_applies_all_changes(cli_runner, chapter_with_content
     assert "- rejected: 0" in history
 
 
-def test_rewrite_checkpoint_preserves_original(cli_runner, chapter_with_content):
+def test_rewrite_checkpoint_preserves_original(cli_runner, chapter_with_content, patch_rewriter):
     _, chapter_dir, md_path, _ = chapter_with_content
 
     cli_runner.invoke(app, ["rewrite", "1"], input="a\nr\nr\nr\n", catch_exceptions=False)

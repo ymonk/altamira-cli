@@ -6,10 +6,9 @@ import typer
 
 from altamira.cli.console import console
 from altamira.domain.chapter import find_chapter
-from altamira.services.rewriter import RewriteFn, mock_rewrite
+from altamira.services.rewriter import RewriteFn, llm_rewrite
 
-# Swap to point at a real LLM rewriter without changing the command.
-_rewriter: RewriteFn = mock_rewrite
+_rewriter: RewriteFn = llm_rewrite
 
 
 def _resolve_chapter(cwd: Path, identifier: str) -> tuple[Path, Path, Path]:
