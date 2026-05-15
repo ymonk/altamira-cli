@@ -26,7 +26,17 @@ app = typer.Typer(invoke_without_command=True, help="Altamira — local-first pr
 
 
 @app.callback()
-def main(ctx: typer.Context) -> None:
+def main(
+    ctx: typer.Context,
+    exec_instruction: str | None = typer.Option(
+        None, "-e", "--exec",
+        help="Run a single instruction and exit (REPL command or plain-English prompt).",
+        metavar="INSTRUCTION",
+    ),
+) -> None:
+    if exec_instruction is not None:
+        from altamira.cli.repl import run_single_instruction
+        raise typer.Exit(code=run_single_instruction(exec_instruction, Path.cwd()))
     if ctx.invoked_subcommand is None:
         from altamira.cli.repl import run_repl
         run_repl(Path.cwd())

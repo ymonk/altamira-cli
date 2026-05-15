@@ -20,6 +20,7 @@ from altamira.domain.chapter import create_chapter, find_chapter, list_chapters,
 from altamira.domain.note import create_note, list_notes
 from altamira.infra.db import ensure_tables
 from altamira.infra.scanner import scan_project
+from altamira.services.provider import get_provider
 from altamira.skills.loader import list_skills
 
 _CMD_COLOR = "#7C9FCE"
@@ -520,6 +521,83 @@ _DISPATCH = {
     "note":     _cmd_note,
     "publish":  _cmd_publish,
 }
+
+
+# ── Non-interactive execution ─────────────────────────────────────────────────
+
+def _build_agent_context(cwd: Path) -> str:
+    """Assemble project text (config + chapter content) for LLM prompts."""
+    parts: list[str] = []
+    try:
+        config = load_config(cwd)
+        parts.append(f"Project: {config.name}")
+        if config.subject_name:
+            parts.append(f"Subject: {config.subject_name}")
+        parts.append("")
+    except Exception:
+        pass
+
+    chapters = list_chapters(cwd / "chapters")
+    for ch in chapters:
+        chapter_dir = cwd / "chapters" / f"chapter-{ch.order:02d}"
+        md_path = chapter_dir / f"chapter-{ch.order:02d}.md"
+        parts.append(f"--- Chapter {ch.order}: {ch.title} ---")
+        parts.append(md_path.read_text(encoding="utf-8").strip() if md_path.exists() else f"[status: {ch.status}]")
+        parts.append("")
+
+    return "\n".join(parts)
+
+
+def run_single_instruction(instruction: str, cwd: Path) -> int:
+    """Execute one instruction as if typed in the REPL. Returns an exit code."""
+    instruction = instruction.strip()
+    if not instruction:
+        console.print("[red]Error:[/red] Instruction cannot be empty.\n")
+        console.print("Usage:")
+        console.print("  altamira -e '/chapter list'")
+        console.print("  altamira -e 'summarize the first three chapters'")
+        return 1
+
+    if instruction.startswith("/"):
+        if instruction.lower() in ("/quit", "/exit"):
+            return 0
+        parts = instruction[1:].split()
+        cmd = parts[0].lower()
+        args = parts[1:]
+        handler = _DISPATCH.get(cmd)
+        if handler is None:
+            console.print(f"[red]Error:[/red] Unknown command: /{cmd}\n")
+            console.print("Valid commands: " + "  ".join(f"/{n}" for n in sorted(_DISPATCH)))
+            return 1
+        state: dict = {"history": []}
+        try:
+            handler(args, cwd, state)
+        except Exception as e:
+            console.print(f"[red]Error:[/red] {e}")
+            return 1
+        return 0
+
+    # Plain-English prompt — send to LLM provider with project context.
+    if not _is_project(cwd):
+        console.print("[yellow]Warning:[/yellow] Not in an Altamira project. Running without project context.")
+
+    try:
+        provider = get_provider()
+    except (EnvironmentError, ImportError, ValueError) as e:
+        console.print(f"[red]Error:[/red] {e}")
+        return 1
+
+    context = _build_agent_context(cwd) if _is_project(cwd) else ""
+    prompt = f"{context}\n{instruction}" if context.strip() else instruction
+
+    try:
+        result = provider(prompt)
+    except Exception as e:
+        console.print(f"[red]Provider error:[/red] {e}")
+        return 1
+
+    console.print(result)
+    return 0
 
 
 # ── REPL entry point ──────────────────────────────────────────────────────────
