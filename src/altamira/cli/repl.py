@@ -1,6 +1,9 @@
 import os
 import platform
+import random
 import subprocess
+import sys
+import threading
 from pathlib import Path
 
 import typer
@@ -523,6 +526,48 @@ _DISPATCH = {
 }
 
 
+# ── Thinking animation ───────────────────────────────────────────────────────
+
+_THINKING_SYNONYMS = ["Thinking", "Processing", "Analyzing", "Pondering", "Reasoning"]
+_THINKING_MAX_WIDTH = max(
+    max(len(s) + 6 for s in _THINKING_SYNONYMS),
+    len("Contemplating."),
+)
+# _CMD_COLOR (#7C9FCE) as a 24-bit ANSI foreground sequence
+_ANSI_CMD_COLOR = "\033[38;2;124;159;206m"
+_ANSI_RESET = "\033[0m"
+
+
+def _thinking_animation(stop_event: threading.Event) -> None:
+    synonym = random.choice(_THINKING_SYNONYMS)
+    dots = 1
+    direction = 1
+    while True:
+        label = "Contemplating." if dots >= 6 else f"{synonym}{'.' * dots}"
+        sys.stdout.write(f"\r{_ANSI_CMD_COLOR}{label:<{_THINKING_MAX_WIDTH}}{_ANSI_RESET}")
+        sys.stdout.flush()
+        if dots >= 6:
+            direction = -1
+        elif dots <= 1:
+            direction = 1
+        dots += direction
+        if stop_event.wait(0.3):
+            break
+
+
+def _call_with_thinking(provider, prompt: str) -> str:
+    stop = threading.Event()
+    t = threading.Thread(target=_thinking_animation, args=(stop,), daemon=True)
+    t.start()
+    try:
+        return provider(prompt)
+    finally:
+        stop.set()
+        t.join(timeout=1)
+        sys.stdout.write("\r" + " " * _THINKING_MAX_WIDTH + "\r")
+        sys.stdout.flush()
+
+
 # ── Agent context builder ─────────────────────────────────────────────────────
 
 def _build_agent_context(cwd: Path) -> str:
@@ -591,7 +636,7 @@ def run_single_instruction(instruction: str, cwd: Path) -> int:
     prompt = f"{context}\n{instruction}" if context.strip() else instruction
 
     try:
-        result = provider(prompt)
+        result = _call_with_thinking(provider, prompt)
     except Exception as e:
         console.print(f"[red]Provider error:[/red] {e}")
         return 1
@@ -641,7 +686,7 @@ def run_repl(cwd: Path) -> None:
             context = _build_agent_context(cwd) if _is_project(cwd) else ""
             prompt = f"{context}\n{raw}" if context.strip() else raw
             try:
-                console.print(provider(prompt))
+                console.print(_call_with_thinking(provider, prompt))
             except Exception as e:
                 console.print(f"[red]Provider error:[/red] {e}")
             continue
