@@ -137,6 +137,47 @@ def test_repl_empty_input_ignored(initialized_project):
         run_repl(initialized_project)
 
 
+# ── /history clear ───────────────────────────────────────────────────────────
+
+def test_history_clear_empties_session_list(initialized_project, capsys):
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=[
+        "/chapter list", "/history clear", "/history", "/exit"
+    ]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "History cleared" in out
+    # Pre-clear commands must not appear after the clear.
+    assert "/chapter list" not in out.split("History cleared")[1]
+    assert "/history clear" not in out.split("History cleared")[1]
+
+
+def test_history_clear_erases_file(initialized_project):
+    from altamira.cli.repl import BoundedFileHistory, _HISTORY_FILENAME
+    hist_file = initialized_project / ".altamira" / _HISTORY_FILENAME
+    h = BoundedFileHistory(hist_file, max_entries=10)
+    h.store_string("/chapter list")
+    h.store_string("/status")
+    assert hist_file.stat().st_size > 0
+
+    h.clear()
+
+    assert hist_file.read_text() == ""
+    assert h.load_history_strings() == []
+
+
+def test_history_clear_resets_in_memory_cache(initialized_project):
+    from altamira.cli.repl import BoundedFileHistory, _HISTORY_FILENAME
+    hist_file = initialized_project / ".altamira" / _HISTORY_FILENAME
+    h = BoundedFileHistory(hist_file, max_entries=10)
+    h.store_string("one")
+    # Force a load so _loaded_strings is populated.
+    _ = h.load_history_strings()
+    h.clear()
+    assert h._loaded_strings == []
+    assert not h._loaded
+
+
 # ── /llm list ────────────────────────────────────────────────────────────────
 
 def test_repl_llm_list_shows_providers(initialized_project, capsys):

@@ -42,7 +42,7 @@ _CMD_DESCRIPTIONS: dict[str, str] = {
     "config":   "show project configuration  (show)",
     "exit":     "exit the REPL",
     "help":     "list all commands with descriptions",
-    "history":  "show commands entered this session",
+    "history":  "show or clear session history  (clear)",
     "llm":      "manage LLM selection  (list · activate)",
     "note":     "manage source notes  (list · add)",
     "open":     "open chapter in system editor",
@@ -68,6 +68,9 @@ _SUBCMD_DESCRIPTIONS: dict[str, dict[str, str]] = {
     },
     "config": {
         "show": "show all altamira.yaml fields",
+    },
+    "history": {
+        "clear": "erase all session and file history",
     },
     "llm": {
         "list":     "list available LLMs and highlight the current model",
@@ -127,6 +130,14 @@ class BoundedFileHistory(History):
         existing.append(string.replace("\n", "\\n"))
         existing = existing[-self._max_entries :]
         self._path.write_text("\n".join(existing) + "\n", encoding="utf-8")
+
+    def clear(self) -> None:
+        self._loaded_strings.clear()
+        self._loaded = False
+        try:
+            self._path.write_text("", encoding="utf-8")
+        except Exception:
+            pass
 
 
 def _get_history(cwd: Path) -> History:
@@ -328,7 +339,14 @@ def _cmd_commands(_args: list[str], _cwd: Path, _state: dict) -> None:
     console.print(f"\n[dim]/help for descriptions[/dim]")
 
 
-def _cmd_history(_args: list[str], _cwd: Path, state: dict) -> None:
+def _cmd_history(args: list[str], _cwd: Path, state: dict) -> None:
+    if args and args[0].lower() == "clear":
+        state["history"].clear()
+        rh = state.get("repl_history")
+        if rh is not None and hasattr(rh, "clear"):
+            rh.clear()
+        console.print("[dim]History cleared.[/dim]")
+        return
     history = state.get("history", [])
     if not history:
         console.print("[dim]No commands yet.[/dim]")
@@ -895,8 +913,8 @@ def run_repl(cwd: Path) -> None:
     console.print(f"  Commands start with [{_CMD_COLOR}]/[/{_CMD_COLOR}]  —  type [{_CMD_COLOR}]/commands[/{_CMD_COLOR}] for a quick list, [{_CMD_COLOR}]/help[/{_CMD_COLOR}] for details.")
     console.print(f"  Select a chapter with [{_CMD_COLOR}]/use <n>[/{_CMD_COLOR}], then use [{_CMD_COLOR}]/open[/{_CMD_COLOR}]  [{_CMD_COLOR}]/review[/{_CMD_COLOR}]  [{_CMD_COLOR}]/rewrite[/{_CMD_COLOR}]\n")
 
-    state: dict = {"history": []}
     repl_history = _get_history(cwd)
+    state: dict = {"history": [], "repl_history": repl_history}
 
     while True:
         try:
