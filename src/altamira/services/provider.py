@@ -8,7 +8,7 @@ _ANTHROPIC_DEFAULT = "claude-sonnet-4-6"
 _OPENAI_DEFAULT = "gpt-4o"
 
 
-def anthropic_provider() -> ProviderFn:
+def anthropic_provider(system: str = "") -> ProviderFn:
     """Return a Claude-backed provider.
 
     Reads:
@@ -32,17 +32,20 @@ def anthropic_provider() -> ProviderFn:
     client = anthropic.Anthropic(api_key=api_key)
 
     def call(prompt: str) -> str:
-        message = client.messages.create(
+        kwargs: dict = dict(
             model=model,
             max_tokens=4096,
             messages=[{"role": "user", "content": prompt}],
         )
+        if system:
+            kwargs["system"] = system
+        message = client.messages.create(**kwargs)
         return message.content[0].text
 
     return call
 
 
-def openai_provider() -> ProviderFn:
+def openai_provider(system: str = "") -> ProviderFn:
     """Return an OpenAI-backed provider.
 
     Reads:
@@ -66,10 +69,14 @@ def openai_provider() -> ProviderFn:
     client = openai.OpenAI(api_key=api_key)
 
     def call(prompt: str) -> str:
+        messages = []
+        if system:
+            messages.append({"role": "system", "content": system})
+        messages.append({"role": "user", "content": prompt})
         response = client.chat.completions.create(
             model=model,
             max_tokens=4096,
-            messages=[{"role": "user", "content": prompt}],
+            messages=messages,
         )
         return response.choices[0].message.content or ""
 
@@ -82,11 +89,11 @@ _PROVIDERS = {
 }
 
 
-def get_provider() -> ProviderFn:
+def get_provider(system: str = "") -> ProviderFn:
     """Return the active provider based on ALTAMIRA_PROVIDER (default: anthropic)."""
     name = os.environ.get("ALTAMIRA_PROVIDER", "anthropic").lower()
     factory = _PROVIDERS.get(name)
     if factory is None:
         valid = ", ".join(_PROVIDERS)
         raise ValueError(f"Unknown provider '{name}'. Valid options: {valid}")
-    return factory()
+    return factory(system=system)

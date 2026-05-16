@@ -54,6 +54,8 @@ def write_chapter(
     if md_path.exists():
         checkpoint.write_text(md_path.read_text(encoding="utf-8"), encoding="utf-8")
 
+#    print(f"About to write content: {content[:100]}... to {md_path} (checkpoint: {checkpoint})")
+
     # Write the new content.
     md_path.write_text(content, encoding="utf-8")
 

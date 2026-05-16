@@ -1,4 +1,5 @@
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
@@ -135,6 +136,49 @@ def test_repl_empty_input_ignored(initialized_project):
         run_repl(initialized_project)
 
 
+# ── multiline prompt editing ─────────────────────────────────────────────────
+
+def test_repl_lexer_renders_each_multiline_row_once():
+    from prompt_toolkit.document import Document
+    from altamira.cli.repl import _ReplLexer
+
+    get_line = _ReplLexer().lex_document(Document("first\nsecond"))
+
+    assert get_line(0) == [("", "first")]
+    assert get_line(1) == [("", "second")]
+
+
+def test_shift_return_uses_prompt_toolkit_newline():
+    from altamira.cli.repl import _shift_return_newline
+
+    class DummyBuffer:
+        def __init__(self):
+            self.newline_copy_margin = None
+            self.inserted_text = None
+
+        def newline(self, copy_margin=True):
+            self.newline_copy_margin = copy_margin
+
+        def insert_text(self, text):
+            self.inserted_text = text
+
+    buffer = DummyBuffer()
+
+    _shift_return_newline(SimpleNamespace(current_buffer=buffer))
+
+    assert buffer.newline_copy_margin is False
+    assert buffer.inserted_text is None
+
+
+def test_repl_uses_empty_multiline_continuation_prompt(initialized_project):
+    from altamira.cli.repl import run_repl
+
+    with patch("altamira.cli.repl.pt_prompt", side_effect=EOFError) as mock_prompt:
+        run_repl(initialized_project)
+
+    assert mock_prompt.call_args.kwargs["prompt_continuation"] == ""
+
+
 # ── -e / run_single_instruction ───────────────────────────────────────────────
 
 def test_exec_empty_instruction_returns_error(initialized_project):
@@ -179,3 +223,99 @@ def test_exec_via_cli_plain_prompt(cli_runner, initialized_project):
         result = cli_runner.invoke(app, ["-e", "tell me about this project"])
     assert result.exit_code == 0
     assert "CLI LLM reply" in result.output
+
+
+# ── tool call dispatch ────────────────────────────────────────────────────────
+
+def test_try_parse_tool_call_at_start():
+    from altamira.cli.repl import _try_parse_tool_call
+    response = '{"tool": "write_chapter", "identifier": "1", "content": "# Title\\n\\nBody", "reason": "test"}\n\nExplanation.'
+    tool, remaining = _try_parse_tool_call(response)
+    assert tool is not None
+    assert tool["tool"] == "write_chapter"
+    assert tool["identifier"] == "1"
+    assert "Explanation." in remaining
+
+
+def test_try_parse_tool_call_rejects_preamble():
+    from altamira.cli.repl import _try_parse_tool_call
+    response = "I'll write this now.\n\n" + '{"tool": "write_chapter", "identifier": "2", "content": "# Ch\\n\\nText", "reason": "r"}\n\nDone.'
+    tool, remaining = _try_parse_tool_call(response)
+    assert tool is None
+    assert remaining == response
+
+
+def test_try_parse_tool_call_no_tool():
+    from altamira.cli.repl import _try_parse_tool_call
+    response = "Just a plain text response with no tool call."
+    tool, remaining = _try_parse_tool_call(response)
+    assert tool is None
+    assert remaining == response
+
+
+def test_repl_executes_write_chapter_tool(initialized_project, capsys):
+    from altamira.domain.chapter import create_chapter
+    from altamira.cli.repl import run_single_instruction
+    create_chapter(initialized_project / "chapters", "The Early Years")
+    tool_json = '{"tool": "write_chapter", "identifier": "1", "content": "# Updated\\n\\nNew body.", "reason": "agent test"}'
+    llm_response = f"{tool_json}\n\nAll done."
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: llm_response):
+        code = run_single_instruction("update chapter 1", initialized_project)
+    assert code == 0
+    md = (initialized_project / "chapters" / "chapter-01" / "chapter-01.md").read_text()
+    assert md == "# Updated\n\nNew body."
+    chapter_dir = initialized_project / "chapters" / "chapter-01"
+    assert list((chapter_dir / "versions").glob("*.md"))
+    assert "agent write" in (chapter_dir / "chapter-01.history.md").read_text()
+
+
+def test_repl_does_not_execute_fenced_tool_example(initialized_project):
+    from altamira.domain.chapter import create_chapter
+    from altamira.cli.repl import run_single_instruction
+
+    create_chapter(initialized_project / "chapters", "The Early Years")
+    md_path = initialized_project / "chapters" / "chapter-01" / "chapter-01.md"
+    original = md_path.read_text()
+    response = (
+        "```json\n"
+        '{"tool": "write_chapter", "identifier": "1", "content": "# Unsafe"}\n'
+        "```"
+    )
+
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: response):
+        code = run_single_instruction("show me a tool example", initialized_project)
+
+    assert code == 0
+    assert md_path.read_text() == original
+
+
+def test_repl_does_not_execute_indented_tool_example(initialized_project):
+    from altamira.domain.chapter import create_chapter
+    from altamira.cli.repl import run_single_instruction
+
+    create_chapter(initialized_project / "chapters", "The Early Years")
+    md_path = initialized_project / "chapters" / "chapter-01" / "chapter-01.md"
+    original = md_path.read_text()
+    response = '    {"tool": "write_chapter", "identifier": "1", "content": "# Unsafe"}'
+
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: response):
+        code = run_single_instruction("show me an indented example", initialized_project)
+
+    assert code == 0
+    assert md_path.read_text() == original
+
+
+def test_repl_does_not_execute_quoted_tool_example(initialized_project):
+    from altamira.domain.chapter import create_chapter
+    from altamira.cli.repl import run_single_instruction
+
+    create_chapter(initialized_project / "chapters", "The Early Years")
+    md_path = initialized_project / "chapters" / "chapter-01" / "chapter-01.md"
+    original = md_path.read_text()
+    response = '> {"tool": "write_chapter", "identifier": "1", "content": "# Unsafe"}'
+
+    with patch("altamira.cli.repl.get_provider", return_value=lambda p: response):
+        code = run_single_instruction("quote a tool example", initialized_project)
+
+    assert code == 0
+    assert md_path.read_text() == original

@@ -1,3 +1,4 @@
+import json
 import os
 import platform
 import random
@@ -8,7 +9,10 @@ from pathlib import Path
 
 import typer
 from prompt_toolkit import prompt as pt_prompt
+from prompt_toolkit.application import get_app
 from prompt_toolkit.completion import Completer, Completion
+from prompt_toolkit.filters import Condition
+from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.formatted_text import FormattedText
 from prompt_toolkit.lexers import Lexer
@@ -24,6 +28,7 @@ from altamira.domain.note import create_note, list_notes
 from altamira.infra.db import ensure_tables
 from altamira.infra.scanner import scan_project
 from altamira.services.provider import get_provider
+from altamira.services.system_prompt import AGENT_SYSTEM_PROMPT
 from altamira.skills.loader import list_skills
 
 _CMD_COLOR = "#7C9FCE"
@@ -81,13 +86,44 @@ _REPL_STYLE = Style.from_dict({
     "completion-menu.meta.completion.current": f"fg:{_CMD_COLOR}",
 })
 
+@Condition
+def _is_multiline_mode() -> bool:
+    """True when the buffer contains a non-command LLM prompt.
+
+    In this mode Enter inserts a newline (so Return and Shift+Return both add
+    lines) and Option/Alt+Enter submits.  Slash commands stay single-line so
+    Enter still executes them immediately.
+    """
+    try:
+        text = get_app().current_buffer.text
+        return bool(text.strip()) and not text.lstrip().startswith("/")
+    except Exception:
+        return False
+
+
+_REPL_KB = KeyBindings()
+
+# Option+Enter (macOS) / Alt+Enter (Linux/Windows) always submits.
+@_REPL_KB.add("escape", "enter")
+def _submit(event):
+    event.current_buffer.validate_and_handle()
+
+# Many terminals send Shift+Return as ControlJ (0x0A / c-j) rather than
+# CR (c-m).  Without an explicit binding, c-j falls through to a default
+# handler that inserts the raw byte, which prompt_toolkit renders as '^J'
+# on a soft-wrapped continuation line.  We intercept it here and insert a
+# proper logical newline so multiline rendering splits the buffer correctly.
+@_REPL_KB.add("c-j", filter=_is_multiline_mode)
+def _shift_return_newline(event):
+    event.current_buffer.newline(copy_margin=False)
+
 
 class _ReplLexer(Lexer):
     def lex_document(self, document):
         style = f"fg:{_CMD_COLOR}" if self._is_valid(document.text) else ""
 
         def get_line(lineno):
-            return [(style, document.text)]
+            return [(style, document.lines[lineno])]
 
         return get_line
 
@@ -591,6 +627,81 @@ def _build_agent_context(cwd: Path) -> str:
     return "\n".join(parts)
 
 
+# ── Tool call parsing and dispatch ───────────────────────────────────────────
+
+def _try_parse_tool_call(text: str) -> tuple[dict | None, str]:
+    """Extract an unambiguous top-level JSON tool call, if present."""
+    lines = text.split("\n")
+
+    first_idx = next((i for i, line in enumerate(lines) if line.strip()), None)
+    if first_idx is None:
+        return None, text
+
+    first_line = lines[first_idx]
+    if first_line[0].isspace() or first_line.startswith((">", "```")):
+        return None, text
+    if not first_line.startswith("{"):
+        return None, text
+
+    candidate = "\n".join(lines[first_idx:])
+    try:
+        data, end_idx = json.JSONDecoder().raw_decode(candidate)
+    except json.JSONDecodeError:
+        return None, text
+
+    if not isinstance(data, dict) or "tool" not in data:
+        return None, text
+
+    suffix = candidate[end_idx:]
+    if suffix.strip() and not suffix.lstrip(" \t").startswith(("\n", "\r")):
+        return None, text
+
+    remaining = suffix.strip()
+    return data, remaining
+
+
+def _handle_tool_call(tool_call: dict, cwd: Path) -> str:
+    """Execute a recognised tool call and return a Rich-formatted result line."""
+    tool_name = tool_call.get("tool")
+
+    if tool_name == "write_chapter":
+        from altamira.tools.chapter_writer import write_chapter
+
+        identifier = tool_call.get("identifier", "")
+        content = tool_call.get("content")
+        reason = tool_call.get("reason", "")
+
+        if not isinstance(content, str) or not content:
+            return "[red]Tool error:[/red] write_chapter requires non-empty string 'content'"
+        if not isinstance(identifier, str) or not identifier:
+            return "[red]Tool error:[/red] write_chapter requires non-empty string 'identifier'"
+
+        try:
+            result = write_chapter(identifier, content, reason=reason, project_root=cwd)
+            return (
+                f"[green]✓[/green]  Wrote {result['bytes_written']} bytes to "
+                f"[bold]{result['chapter']}[/bold]"
+                f"  [dim](snapshot: {result['checkpoint']})[/dim]"
+            )
+        except FileNotFoundError as e:
+            return f"[red]Tool error:[/red] {e}"
+        except Exception as e:
+            return f"[red]Tool error:[/red] {e}"
+
+    return f"[yellow]Unknown tool:[/yellow] {tool_name}"
+
+
+def _print_agent_response(response: str, cwd: Path) -> None:
+    """Print an LLM response, executing any embedded tool call first."""
+    tool_call, remaining = _try_parse_tool_call(response)
+    if tool_call:
+        console.print(_handle_tool_call(tool_call, cwd))
+        if remaining:
+            console.print(remaining)
+    else:
+        console.print(response)
+
+
 # ── Non-interactive execution ─────────────────────────────────────────────────
 
 def run_single_instruction(instruction: str, cwd: Path) -> int:
@@ -627,7 +738,7 @@ def run_single_instruction(instruction: str, cwd: Path) -> int:
         console.print("[yellow]Warning:[/yellow] Not in an Altamira project. Running without project context.")
 
     try:
-        provider = get_provider()
+        provider = get_provider(system=AGENT_SYSTEM_PROMPT)
     except (EnvironmentError, ImportError, ValueError) as e:
         console.print(f"[red]Error:[/red] {e}")
         return 1
@@ -641,7 +752,7 @@ def run_single_instruction(instruction: str, cwd: Path) -> int:
         console.print(f"[red]Provider error:[/red] {e}")
         return 1
 
-    console.print(result)
+    _print_agent_response(result, cwd)
     return 0
 
 
@@ -665,6 +776,9 @@ def run_repl(cwd: Path) -> None:
                 complete_while_typing=True,
                 complete_style=CompleteStyle.COLUMN,
                 style=_REPL_STYLE,
+                key_bindings=_REPL_KB,
+                multiline=_is_multiline_mode,
+                prompt_continuation="",
             ).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\nBye.")
@@ -679,14 +793,14 @@ def run_repl(cwd: Path) -> None:
 
         if not raw.startswith("/"):
             try:
-                provider = get_provider()
+                provider = get_provider(system=AGENT_SYSTEM_PROMPT)
             except (EnvironmentError, ImportError, ValueError) as e:
                 console.print(f"[red]Error:[/red] {e}")
                 continue
             context = _build_agent_context(cwd) if _is_project(cwd) else ""
             prompt = f"{context}\n{raw}" if context.strip() else raw
             try:
-                console.print(_call_with_thinking(provider, prompt))
+                _print_agent_response(_call_with_thinking(provider, prompt), cwd)
             except Exception as e:
                 console.print(f"[red]Provider error:[/red] {e}")
             continue
