@@ -33,7 +33,25 @@ def main(
         help="Run a single instruction and exit (REPL command or plain-English prompt).",
         metavar="INSTRUCTION",
     ),
+    llm_list: bool = typer.Option(
+        False, "--llm-list",
+        help="List available LLMs and highlight the current effective model, then exit.",
+    ),
+    llm_activate: str | None = typer.Option(
+        None, "--llm-activate",
+        help="Save a model as the project default and exit.  Example: --llm-activate gpt-4o",
+        metavar="MODEL",
+    ),
 ) -> None:
+    if llm_list:
+        from altamira.cli.repl import _apply_config_model_defaults, _print_llm_list
+        _apply_config_model_defaults(Path.cwd())
+        _print_llm_list()
+        raise typer.Exit()
+    if llm_activate is not None:
+        from altamira.cli.repl import _activate_model
+        _activate_model(llm_activate, Path.cwd())
+        raise typer.Exit()
     if exec_instruction is not None:
         from altamira.cli.repl import run_single_instruction
         raise typer.Exit(code=run_single_instruction(exec_instruction, Path.cwd()))

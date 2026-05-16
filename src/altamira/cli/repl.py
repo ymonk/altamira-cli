@@ -12,6 +12,7 @@ from prompt_toolkit import prompt as pt_prompt
 from prompt_toolkit.application import get_app
 from prompt_toolkit.completion import Completer, Completion
 from prompt_toolkit.filters import Condition
+from prompt_toolkit.history import History, InMemoryHistory
 from prompt_toolkit.key_binding import KeyBindings
 from prompt_toolkit.shortcuts import CompleteStyle
 from prompt_toolkit.formatted_text import FormattedText
@@ -27,7 +28,7 @@ from altamira.domain.chapter import create_chapter, find_chapter, list_chapters,
 from altamira.domain.note import create_note, list_notes
 from altamira.infra.db import ensure_tables
 from altamira.infra.scanner import scan_project
-from altamira.services.provider import get_provider
+from altamira.services.provider import MODEL_CATALOG, find_provider_for_model, get_effective_model, get_provider
 from altamira.services.system_prompt import AGENT_SYSTEM_PROMPT
 from altamira.skills.loader import list_skills
 
@@ -42,6 +43,7 @@ _CMD_DESCRIPTIONS: dict[str, str] = {
     "exit":     "exit the REPL",
     "help":     "list all commands with descriptions",
     "history":  "show commands entered this session",
+    "llm":      "manage LLM selection  (list · activate)",
     "note":     "manage source notes  (list · add)",
     "open":     "open chapter in system editor",
     "publish":  "check project readiness  (prepare)",
@@ -67,6 +69,10 @@ _SUBCMD_DESCRIPTIONS: dict[str, dict[str, str]] = {
     "config": {
         "show": "show all altamira.yaml fields",
     },
+    "llm": {
+        "list":     "list available LLMs and highlight the current model",
+        "activate": "save a model as the project default  (/llm activate <model>)",
+    },
     "skill": {
         "list": "list available prompt skills",
     },
@@ -85,6 +91,60 @@ _REPL_STYLE = Style.from_dict({
     "completion-menu.meta.completion":         "fg:#444466",
     "completion-menu.meta.completion.current": f"fg:{_CMD_COLOR}",
 })
+
+_HISTORY_DEFAULT_SIZE = 100
+_HISTORY_FILENAME = "repl_history"
+_REPL_CONFIG_FILENAME = "altamira.json"
+
+
+class BoundedFileHistory(History):
+    """Persistent REPL history stored one entry per line, bounded to max_entries.
+
+    Newlines within multi-line entries are escaped as the two-character
+    sequence ``\\n`` so the file stays line-oriented.
+    """
+
+    def __init__(self, path: Path, max_entries: int = _HISTORY_DEFAULT_SIZE) -> None:
+        self._path = path
+        self._max_entries = max_entries
+        super().__init__()
+
+    def load_history_strings(self) -> list[str]:
+        try:
+            raw = self._path.read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError:
+            return []
+        entries = [l.replace("\\n", "\n") for l in raw if l]
+        # Return newest-first so Up arrow shows the most recent entry.
+        return list(reversed(entries[-self._max_entries :]))
+
+    def store_string(self, string: str) -> None:
+        try:
+            existing = self._path.read_text(encoding="utf-8").splitlines() if self._path.exists() else []
+        except Exception:
+            existing = []
+        existing = [l for l in existing if l]
+        existing.append(string.replace("\n", "\\n"))
+        existing = existing[-self._max_entries :]
+        self._path.write_text("\n".join(existing) + "\n", encoding="utf-8")
+
+
+def _get_history(cwd: Path) -> History:
+    """Return a history object backed by .altamira/repl_history when in a project."""
+    altamira_dir = cwd / ".altamira"
+    if not altamira_dir.exists():
+        return InMemoryHistory()
+
+    max_entries = _HISTORY_DEFAULT_SIZE
+    config_path = altamira_dir / _REPL_CONFIG_FILENAME
+    if config_path.exists():
+        try:
+            cfg = json.loads(config_path.read_text(encoding="utf-8"))
+            max_entries = max(1, int(cfg.get("history_size", _HISTORY_DEFAULT_SIZE)))
+        except Exception:
+            pass
+
+    return BoundedFileHistory(altamira_dir / _HISTORY_FILENAME, max_entries)
 
 @Condition
 def _is_multiline_mode() -> bool:
@@ -540,6 +600,73 @@ def _cmd_skill(args: list[str], _cwd: Path, _state: dict) -> None:
         console.print("Usage: /skill list")
 
 
+def _apply_config_model_defaults(cwd: Path) -> None:
+    """Set ALTAMIRA_PROVIDER/MODEL from altamira.yaml when env vars are absent."""
+    if os.environ.get("ALTAMIRA_PROVIDER") and os.environ.get("ALTAMIRA_MODEL"):
+        return
+    try:
+        config = load_config(cwd)
+        if config.provider and not os.environ.get("ALTAMIRA_PROVIDER"):
+            os.environ["ALTAMIRA_PROVIDER"] = config.provider
+        if config.model and not os.environ.get("ALTAMIRA_MODEL"):
+            os.environ["ALTAMIRA_MODEL"] = config.model
+    except Exception:
+        pass
+
+
+def _print_llm_list() -> None:
+    active_provider, active_model = get_effective_model()
+    for provider, models in MODEL_CATALOG.items():
+        is_active_provider = provider == active_provider
+        header_style = "bold" if is_active_provider else "dim"
+        console.print(f"\n  [{header_style}]{provider}[/{header_style}]")
+        catalog_models = list(models)
+        if is_active_provider and active_model not in catalog_models:
+            catalog_models = [active_model] + catalog_models
+        for model in catalog_models:
+            is_active = is_active_provider and model == active_model
+            if is_active:
+                console.print(f"  [bold {_CMD_COLOR}]* {model}[/bold {_CMD_COLOR}]")
+            else:
+                console.print(f"    [dim]{model}[/dim]")
+    console.print()
+
+
+def _activate_model(model: str, cwd: Path) -> None:
+    """Persist *model* as the project-default provider/model in altamira.yaml."""
+    provider = find_provider_for_model(model)
+    if provider is None:
+        all_models = [m for ms in MODEL_CATALOG.values() for m in ms]
+        console.print(f"[red]Unknown model:[/red] {model}")
+        console.print("Available models: " + "  ".join(all_models))
+        return
+    if not _is_project(cwd):
+        console.print("[red]Error:[/red] Not in an Altamira project. Run: altamira init <dir>")
+        return
+    config = load_config(cwd)
+    config.provider = provider
+    config.model = model
+    from altamira.config.loader import write_config
+    write_config(config, cwd)
+    os.environ["ALTAMIRA_PROVIDER"] = provider
+    os.environ["ALTAMIRA_MODEL"] = model
+    console.print(f"[green]✓[/green]  Activated [bold]{model}[/bold]  [dim]({provider})[/dim]")
+    _print_llm_list()
+
+
+def _cmd_llm(args: list[str], cwd: Path, _state: dict) -> None:
+    subcmd = args[0].lower() if args else ""
+    if subcmd == "list":
+        _print_llm_list()
+    elif subcmd == "activate":
+        if len(args) < 2:
+            console.print("Usage: /llm activate <model>")
+            return
+        _activate_model(args[1], cwd)
+    else:
+        console.print("Usage: /llm list | activate <model>")
+
+
 # ── Dispatch table ────────────────────────────────────────────────────────────
 
 _DISPATCH = {
@@ -549,6 +676,7 @@ _DISPATCH = {
     "clear":    _cmd_clear,
     "status":   _cmd_status,
     "config":   _cmd_config,
+    "llm":      _cmd_llm,
     "skill":    _cmd_skill,
     "chapter":  _cmd_chapter,
     "scan":     _cmd_scan,
@@ -706,6 +834,7 @@ def _print_agent_response(response: str, cwd: Path) -> None:
 
 def run_single_instruction(instruction: str, cwd: Path) -> int:
     """Execute one instruction as if typed in the REPL. Returns an exit code."""
+    _apply_config_model_defaults(cwd)
     instruction = instruction.strip()
     if not instruction:
         console.print("[red]Error:[/red] Instruction cannot be empty.\n")
@@ -759,6 +888,7 @@ def run_single_instruction(instruction: str, cwd: Path) -> int:
 # ── REPL entry point ──────────────────────────────────────────────────────────
 
 def run_repl(cwd: Path) -> None:
+    _apply_config_model_defaults(cwd)
     in_project = _is_project(cwd)
     project_label = f"  [dim]{cwd.name}[/dim]" if in_project else "  [yellow]no project[/yellow]"
     console.print(f"\n[bold]Altamira[/bold] v{__version__}{project_label}\n")
@@ -766,6 +896,7 @@ def run_repl(cwd: Path) -> None:
     console.print(f"  Select a chapter with [{_CMD_COLOR}]/use <n>[/{_CMD_COLOR}], then use [{_CMD_COLOR}]/open[/{_CMD_COLOR}]  [{_CMD_COLOR}]/review[/{_CMD_COLOR}]  [{_CMD_COLOR}]/rewrite[/{_CMD_COLOR}]\n")
 
     state: dict = {"history": []}
+    repl_history = _get_history(cwd)
 
     while True:
         try:
@@ -779,6 +910,7 @@ def run_repl(cwd: Path) -> None:
                 key_bindings=_REPL_KB,
                 multiline=_is_multiline_mode,
                 prompt_continuation="",
+                history=repl_history,
             ).strip()
         except (EOFError, KeyboardInterrupt):
             console.print("\nBye.")

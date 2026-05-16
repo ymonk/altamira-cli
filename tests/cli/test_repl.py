@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -134,6 +135,85 @@ def test_repl_empty_input_ignored(initialized_project):
     from altamira.cli.repl import run_repl
     with patch("altamira.cli.repl.pt_prompt", side_effect=["", "   ", "/exit"]):
         run_repl(initialized_project)
+
+
+# ── /llm list ────────────────────────────────────────────────────────────────
+
+def test_repl_llm_list_shows_providers(initialized_project, capsys):
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/llm list", "/exit"]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "anthropic" in out
+    assert "openai" in out
+
+
+def test_repl_llm_list_marks_active_model(initialized_project, capsys, monkeypatch):
+    monkeypatch.setenv("ALTAMIRA_PROVIDER", "anthropic")
+    monkeypatch.setenv("ALTAMIRA_MODEL", "claude-sonnet-4-6")
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/llm list", "/exit"]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "* claude-sonnet-4-6" in out
+
+
+def test_repl_llm_bad_subcmd_prints_usage(initialized_project, capsys):
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/llm", "/exit"]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "Usage" in out
+
+
+def test_repl_llm_activate_writes_config(initialized_project, capsys):
+    from altamira.cli.repl import run_repl
+    from altamira.config.loader import load_config
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/llm activate gpt-4o-mini", "/exit"]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "gpt-4o-mini" in out
+    config = load_config(initialized_project)
+    assert config.model == "gpt-4o-mini"
+    assert config.provider == "openai"
+
+
+def test_repl_llm_activate_rejects_unknown_model(initialized_project, capsys):
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/llm activate no-such-model", "/exit"]):
+        run_repl(initialized_project)
+    out = capsys.readouterr().out
+    assert "Unknown model" in out
+
+
+def test_apply_config_model_defaults_sets_env(initialized_project, monkeypatch):
+    monkeypatch.delenv("ALTAMIRA_PROVIDER", raising=False)
+    monkeypatch.delenv("ALTAMIRA_MODEL", raising=False)
+    from altamira.config.loader import load_config, write_config
+    config = load_config(initialized_project)
+    config.provider = "openai"
+    config.model = "o3"
+    write_config(config, initialized_project)
+
+    from altamira.cli.repl import _apply_config_model_defaults
+    _apply_config_model_defaults(initialized_project)
+    assert os.environ.get("ALTAMIRA_PROVIDER") == "openai"
+    assert os.environ.get("ALTAMIRA_MODEL") == "o3"
+
+
+def test_apply_config_model_defaults_env_wins(initialized_project, monkeypatch):
+    monkeypatch.setenv("ALTAMIRA_PROVIDER", "anthropic")
+    monkeypatch.setenv("ALTAMIRA_MODEL", "claude-opus-4-7")
+    from altamira.config.loader import load_config, write_config
+    config = load_config(initialized_project)
+    config.provider = "openai"
+    config.model = "gpt-4o"
+    write_config(config, initialized_project)
+
+    from altamira.cli.repl import _apply_config_model_defaults
+    _apply_config_model_defaults(initialized_project)
+    assert os.environ.get("ALTAMIRA_PROVIDER") == "anthropic"
+    assert os.environ.get("ALTAMIRA_MODEL") == "claude-opus-4-7"
 
 
 # ── multiline prompt editing ─────────────────────────────────────────────────
@@ -319,3 +399,80 @@ def test_repl_does_not_execute_quoted_tool_example(initialized_project):
 
     assert code == 0
     assert md_path.read_text() == original
+
+
+# ── BoundedFileHistory ────────────────────────────────────────────────────────
+
+def test_bounded_history_round_trips_entries(tmp_path):
+    from altamira.cli.repl import BoundedFileHistory
+    h = BoundedFileHistory(tmp_path / "hist", max_entries=10)
+    h.store_string("first")
+    h.store_string("second")
+    loaded = h.load_history_strings()
+    assert loaded[0] == "second"
+    assert loaded[1] == "first"
+
+
+def test_bounded_history_truncates_to_max(tmp_path):
+    from altamira.cli.repl import BoundedFileHistory
+    h = BoundedFileHistory(tmp_path / "hist", max_entries=3)
+    for i in range(6):
+        h.store_string(f"entry-{i}")
+    loaded = h.load_history_strings()
+    assert len(loaded) == 3
+    assert loaded[0] == "entry-5"
+    assert loaded[2] == "entry-3"
+
+
+def test_bounded_history_escapes_newlines(tmp_path):
+    from altamira.cli.repl import BoundedFileHistory
+    h = BoundedFileHistory(tmp_path / "hist", max_entries=10)
+    h.store_string("line one\nline two")
+    raw = (tmp_path / "hist").read_text()
+    assert "\\n" in raw
+    assert h.load_history_strings()[0] == "line one\nline two"
+
+
+def test_bounded_history_missing_file_returns_empty(tmp_path):
+    from altamira.cli.repl import BoundedFileHistory
+    h = BoundedFileHistory(tmp_path / "no_such_file", max_entries=10)
+    assert h.load_history_strings() == []
+
+
+def test_get_history_returns_in_memory_outside_project(tmp_path):
+    from prompt_toolkit.history import InMemoryHistory
+    from altamira.cli.repl import _get_history
+    assert isinstance(_get_history(tmp_path), InMemoryHistory)
+
+
+def test_get_history_returns_file_history_in_project(initialized_project):
+    from altamira.cli.repl import BoundedFileHistory, _get_history
+    assert isinstance(_get_history(initialized_project), BoundedFileHistory)
+
+
+def test_get_history_reads_size_from_altamira_json(initialized_project):
+    import json as _json
+    from altamira.cli.repl import BoundedFileHistory, _get_history
+    cfg_path = initialized_project / ".altamira" / "altamira.json"
+    cfg_path.write_text(_json.dumps({"history_size": 42}))
+    h = _get_history(initialized_project)
+    assert isinstance(h, BoundedFileHistory)
+    assert h._max_entries == 42
+
+
+def test_repl_passes_bounded_history_to_prompt(initialized_project):
+    from altamira.cli.repl import BoundedFileHistory, run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=["/exit"]) as mock_pt:
+        run_repl(initialized_project)
+    assert "history" in mock_pt.call_args.kwargs
+    assert isinstance(mock_pt.call_args.kwargs["history"], BoundedFileHistory)
+
+
+def test_repl_passes_in_memory_history_outside_project(tmp_path):
+    from prompt_toolkit.history import InMemoryHistory
+    from altamira.cli.repl import run_repl
+    with patch("altamira.cli.repl.pt_prompt", side_effect=[EOFError]):
+        run_repl(tmp_path)
+    # Can't easily inspect the history kwarg after EOFError path — test via _get_history directly.
+    from altamira.cli.repl import _get_history
+    assert isinstance(_get_history(tmp_path), InMemoryHistory)

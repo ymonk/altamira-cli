@@ -12,3 +12,5 @@ class ProjectConfig(BaseModel):
     description: str = ""
     cover: str = ""
     require_source_notes: bool = False
+    provider: str = ""
+    model: str = ""
